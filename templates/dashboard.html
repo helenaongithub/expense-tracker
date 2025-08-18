@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-0">
+      Visualization
+      <small id="dashboard-duration" class="text-muted ms-3"></small>
+    </h3>
+    <div><small class="text-muted">Use the same query params as the main page (time / searches)</small></div>
+  </div>
+  <div>
+    <!-- optional controls could go here -->
+  </div>
+</div>
+
+<div id="no-data" class="alert alert-info d-none">No data for the selected filters.</div>
+
+<!-- Monthly / daily chart (adaptive) -->
+<div class="mb-4">
+  <div class="card">
+    <div class="card-header" id="primary-chart-title">Primary chart</div>
+    <div class="card-body" style="min-height: 260px;">
+      <canvas id="monthlyChart" height="200" style="width:100%;"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- Category distribution -->
+<div class="mb-4">
+  <div class="card">
+    <div class="card-header">Category distribution (expenses)</div>
+    <div class="card-body" style="min-height: 300px;">
+      <canvas id="pieChart" height="400" style="width:100%;"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+(async function() {
+  const q = window.location.search || '';
+  const res = await fetch('/dashboard/data' + q);
+  if (!res.ok) {
+    // show duration as unknown and show no-data
+    document.getElementById('dashboard-duration').textContent = ' — (unable to load)';
+    document.getElementById('no-data').classList.remove('d-none');
+    return;
+  }
+
+  const data = await res.json();
+
+  // show human-friendly duration
+  const rawDuration = data.duration || '';
+  const displayDuration = (rawDuration === 'total duration' || rawDuration === '' ) ? 'all time' : rawDuration;
+  document.getElementById('dashboard-duration').textContent = displayDuration ? ` — ${displayDuration}` : '';
+
+  if (data.empty) {
+    // show message but still show the duration
+    document.getElementById('no-data').classList.remove('d-none');
+    // also set sensible chart titles
+    document.getElementById('primary-chart-title').textContent = 'Primary chart';
+    return;
+  }
+
+  // update primary chart title according to view
+  const primaryTitleEl = document.getElementById('primary-chart-title');
+
+  // destroy previous charts if exist
+  if (window._monthlyChart instanceof Chart) window._monthlyChart.destroy();
+  if (window._pieChart instanceof Chart) window._pieChart.destroy();
+
+  const monthlyCanvas = document.getElementById('monthlyChart');
+  const pieCanvas = document.getElementById('pieChart');
+
+  if (data.view === 'daily') {
+    // transactions list -> show per-transaction bar chart
+    primaryTitleEl.textContent = `Transactions for ${displayDuration}`;
+    const labels = data.transactions.map(t => `${t.id} — ${t.description}`);
+    const values = data.transactions.map(t => t.amount);
+
+    window._monthlyChart = new Chart(monthlyCanvas.getContext('2d'), {
+      type: 'bar',
+      data: { labels, datasets: [{ label: 'Amount', data: values, borderWidth: 1 }] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { y: { beginAtZero: true } },
+        plugins: {
+          tooltip: { callbacks: { label: ctx => `${ctx.formattedValue}` } }
+        }
+      }
+    });
+
+  } else if (data.view === 'monthly_by_day') {
+    primaryTitleEl.textContent = `Daily totals for ${displayDuration}`;
+    window._monthlyChart = new Chart(monthlyCanvas.getContext('2d'), {
+      type: 'bar',
+      data: { labels: data.labels, datasets: [{ label: 'Daily total', data: data.values, borderWidth: 1 }] },
+      options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
+    });
+
+  } else { // monthly / all-time
+    primaryTitleEl.textContent = `Monthly trend for ${displayDuration}`;
+    window._monthlyChart = new Chart(monthlyCanvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: data.months,
+        datasets: [{ label: 'Monthly total', data: data.month_totals, fill: true, tension: 0.2, borderWidth: 2 }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
+    });
+  }
+
+  // Category pie chart
+  const catLabels = data.categories.map(c => c.category);
+  const catValues = data.categories.map(c => c.total);
+
+  window._pieChart = new Chart(pieCanvas.getContext('2d'), {
+    type: 'pie',
+    data: { labels: catLabels, datasets: [{ data: catValues, borderWidth: 1 }] },
+    options: { responsive: true, maintainAspectRatio: false }
+  });
+
+})();
+</script>
+{% endblock %}

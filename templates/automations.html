@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+<h3>Monthly Automations</h3>
+
+<div class="mb-3">
+  <form method="post" class="row g-2">
+    <input type="hidden" name="action" value="add" />
+    <div class="col-auto"><input name="day" class="form-control" placeholder="day" required></div>
+    <div class="col-auto"><input name="description" class="form-control" placeholder="description" required></div>
+    <div class="col-auto"><input name="amount" class="form-control" placeholder="amount" required></div>
+    <div class="col-auto"><input name="category" class="form-control" placeholder="category"></div>
+    <div class="col-auto">
+      <select name="is_expense" class="form-select" aria-label="type">
+        <option value="1" selected>Expense</option>
+        <option value="0">Income</option>
+      </select>
+    </div>
+    <div class="col-auto"><input name="start" type="date" class="form-control" placeholder="start"></div>
+    <div class="col-auto"><input name="end" type="date" class="form-control" placeholder="end"></div>
+    <div class="col-auto">
+      <button class="btn btn-primary">Add automation</button>
+    </div>
+  </form>
+</div>
+
+<div class="mb-4">
+  <form method="post">
+    <input type="hidden" name="action" value="run" />
+    <button class="btn btn-primary">Run automations now</button>
+  </form>
+</div>
+
+<h4 class="mt-4">Current automations</h4>
+{% if automations %}
+  <table class="table table-sm table-dark table-striped">
+    <thead>
+      <tr>
+        <th>day</th><th>description</th><th>amount</th><th>category</th>
+        <th>is_expense</th><th>start</th><th>end</th><th>actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in automations %}
+        <tr>
+          <td>{{ a.day }}</td>
+          <td>{{ a.description }}</td>
+          <td>{{ a.amount }}</td>
+          <td>{{ a.category }}</td>
+          <td>{{ a.is_expense }}</td>
+          <td>{{ a.start }}</td>
+          <td>{{ a.end }}</td>
+          <td>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('automation_edit', aid=a.id) }}">edit</a>
+
+            <form id="delete-form-automation-{{ a.id }}" style="display:inline"
+                  action="{{ url_for('automation_delete', aid=a.id) }}" method="post">
+              <button type="button" class="btn btn-sm btn-outline-danger delete-btn"
+                      data-form-id="delete-form-automation-{{ a.id }}"
+                      data-item="Automation #{{ a.id }} — {{ a.description }} ({{ a.amount }})">
+                delete
+              </button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p>No automations configured yet.</p>
+{% endif %}
+
+
+{% endblock %}

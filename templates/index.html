@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block content %}
+<h3>Transactions - {{ duration }}</h3>
+
+<form class="row g-2 mb-3" method="get" action="{{ url_for('index') }}">
+  <!-- Time filter -->
+  <div class="col-auto">
+    <input name="time" class="form-control" style="width: 180px;"
+           placeholder="Time"
+           value="{{ time }}">
+  </div>
+
+  <!-- Independent search -->
+  <div class="col-auto">
+    <input name="search_id" class="form-control"
+         style="width: 180px;" placeholder="Search ID" value="{{ search_id }}">
+  </div>
+  <div class="col-auto">
+    <input name="search_amount" class="form-control"
+         style="width: 180px;" placeholder="Search Amount" value="{{ search_amount }}">
+  </div>
+  <div class="col-auto">
+    <input name="search_desc" class="form-control"
+         style="width: 180px;" placeholder="Search Description" value="{{ search_desc }}">
+  </div>
+  <div class="col-auto">
+    <input name="search_cate" class="form-control"
+         style="width: 180px;" placeholder="Search Category" value="{{ search_cate }}">
+  </div>
+
+    <!-- Sorting -->
+  <div class="col-auto d-flex align-items-center">
+    <label for="order" class="form-label mb-0">Sort by</label>
+  </div>
+
+  <div class="col-auto">
+    <select name="order" class="form-select" style="width: 180px;">
+      <option value="date" {% if order=='date' %}selected{% endif %}>Date</option>
+      <option value="category" {% if order=='category' %}selected{% endif %}>Category</option>
+      <option value="amount" {% if order=='amount' %}selected{% endif %}>Amount</option>
+      <option value="description" {% if order=='description' %}selected{% endif %}>Description</option>
+      <option value="id" {% if order=='id' %}selected{% endif %}>Index</option>
+    </select>
+  </div>
+
+  <div class="col-auto">
+    <button class="btn btn-primary">Apply</button>
+  </div>
+  
+</form>
+
+{% set qs = request.query_string.decode('utf-8') %}
+{% if qs %}
+  {% if 'time=' in qs %}
+    {% set full_qs = qs %}
+  {% else %}
+    {% set full_qs = 'time=' ~ effective_time ~ '&' ~ qs %}
+  {% endif %}
+{% else %}
+  {% set full_qs = 'time=' ~ effective_time %}
+{% endif %}
+
+<a class="btn btn-sm btn-outline-primary"
+   id="visualize-current"
+   href="{{ url_for('dashboard') }}?{{ full_qs }}">
+  Visualize current table
+</a>
+
+
+<p class="mt-3"><strong>Total:</strong> {{ total }}</p>
+
+<table class="table table-sm table-dark table-striped">
+  <thead>
+    <tr><th>id</th><th>date</th><th>description</th><th>amount</th><th>category</th><th>actions</th></tr>
+  </thead>
+  <tbody>
+    {% for tx in transactions %}
+    <tr>
+      <td>{{ tx['id'] }}</td>
+      <td>{{ tx['date'] }}</td>
+      <td>{{ tx['description'] }}</td>
+      <td>{{ tx['amount'] }}</td>
+      <td>{{ tx['category'] }}</td>
+      <td>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('transaction', tx_id=tx['id']) }}">view</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('edit', tx_id=tx['id']) }}">edit</a>
+        <form id="delete-form-{{ tx['id'] }}" style="display:inline" action="{{ url_for('delete', tx_id=tx['id']) }}" method="post">
+          <button type="button" class="btn btn-sm btn-outline-danger delete-btn"
+                  data-form-id="delete-form-{{ tx['id'] }}"
+                  data-item="Transaction #{{ tx['id'] }} — {{ tx['description'] }} ({{ tx['amount'] }})">
+            delete
+          </button>
+        </form>
+
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">no transactions</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}
