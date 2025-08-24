@@ -22,6 +22,8 @@ Tracks transactions (expenses & income), categories and recurring automations (f
 * Automations (monthly recurring transactions)
 * Visualization dashboard: monthly/daily trends + pie chart by category
 * Basic client-side and server-side validation for forms
+* Sync helper so that user-provided sync scripts can be executed
+* Currency exchange to main currency
 
 ## Quickstart — run locally
 
@@ -44,13 +46,10 @@ pip install -r requirements.txt
 
 3. **Environment / secret key**
 
-Create a `.env` file (do **not** commit this file). Example:
+Create a `.env` file (do **not** commit this file). A template can be viewed in .env.template. Thre you set the flask secret, the sync upload and download scripts and the main currency.
 
-```
-FLASK_SECRET=a-very-random-secret-key-here
-```
-
-**Important:** Flask `flash()` and session functionality requires `app.secret_key` to be set. The app reads `os.environ['FLASK_SECRET']`
+Copy `.env.template` to `.env` and edit values before starting the app.
+Adding sync scripts is only optional. The expense tracker can run only locally.
 
 4. **Init DB**
 
@@ -94,10 +93,10 @@ Then open: `http://127.0.0.1:5000/`
 
 ## Open To-Dos
 
-* enable syncing (cloud backup / remote DB)
 * unit tests (pytest) for core helpers (date parsing, category logic, add/edit/delete)
 * schedule daily automations (APScheduler or system cron)
 * Dockerfile / docker-compose for easier local deployment
 * introduce import/export UX (XLSX, CSV import pages + mapping)
 * improve accessibility, keyboard navigation, and mobile layout
 * add pagination for the transactions list
+* split expenses application, sharable

@@ -10,7 +10,8 @@ def init_categories_db():
         cur.executescript("""
         CREATE TABLE IF NOT EXISTS categories (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL UNIQUE
+          name TEXT NOT NULL UNIQUE,
+          emoji TEXT DEFAULT NULL
         );
         CREATE TABLE IF NOT EXISTS category_keywords (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,30 +46,28 @@ def get_categories_dict() -> Dict[str, List[str]]:
     return cats
 
 def list_categories_with_ids():
-    """return list of dicts: {'id': category_id, 'name': category_name, 'keywords': [{'id': kw_id, 'keyword': '...'}, ...]}"""
     with dbmod.get_conn() as conn:
         cur = conn.cursor()
-        cur.execute('SELECT id, name FROM categories ORDER BY name')
+        cur.execute('SELECT id, name, emoji FROM categories ORDER BY name')
         cats = []
         for c in cur.fetchall():
             cur.execute('SELECT id, keyword FROM category_keywords WHERE category_id = ? ORDER BY keyword', (c['id'],))
             keywords = [{'id': k['id'], 'keyword': k['keyword']} for k in cur.fetchall()]
-            cats.append({'id': c['id'], 'name': c['name'], 'keywords': keywords})
+            cats.append({'id': c['id'], 'name': c['name'], 'emoji': c['emoji'], 'keywords': keywords})
     return cats
 
-def add_category(name: str):
+def add_category(name: str, emoji: str = None):
     with dbmod.get_conn() as conn:
         cur = conn.cursor()
-        cur.execute('INSERT OR IGNORE INTO categories (name) VALUES (?)', (name,))
+        cur.execute('INSERT OR IGNORE INTO categories (name, emoji) VALUES (?, ?)', (name, emoji))
         conn.commit()
         cur.execute('SELECT id FROM categories WHERE name = ?', (name,))
         row = cur.fetchone()
         return row['id'] if row else None
 
-def update_category_name(cat_id: int, new_name: str):
+def update_category_name(cat_id: int, new_name: str, new_emoji: str = None):
     with dbmod.get_conn() as conn:
         cur = conn.cursor()
-
         # get old name first
         cur.execute('SELECT name FROM categories WHERE id = ?', (cat_id,))
         row = cur.fetchone()
@@ -76,11 +75,14 @@ def update_category_name(cat_id: int, new_name: str):
             return False
         old_name = row[0]
 
-        # update categories table
-        cur.execute('UPDATE categories SET name = ? WHERE id = ?', (new_name, cat_id))
+        # update categories table (name + optional emoji)
+        if new_emoji is None:
+            cur.execute('UPDATE categories SET name = ? WHERE id = ?', (new_name, cat_id))
+        else:
+            cur.execute('UPDATE categories SET name = ?, emoji = ? WHERE id = ?', (new_name, new_emoji, cat_id))
         updated = cur.rowcount > 0
 
-        # update all existing transactions
+        # update all existing transactions for the name change
         cur.execute('UPDATE expenses SET category = ? WHERE category = ?', (new_name, old_name))
         conn.commit()
         return updated

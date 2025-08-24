@@ -2,6 +2,12 @@
 {% block content %}
 <h3>Transactions - {{ duration }}</h3>
 
+<style>
+.category-emoji-inline { font-size:1.05rem; vertical-align:middle; }
+.category-name-inline { vertical-align:middle; }
+</style>
+
+
 <form class="row g-2 mb-3" method="get" action="{{ url_for('index') }}">
   <!-- Time filter -->
   <div class="col-auto">
@@ -69,9 +75,11 @@
 
 <p class="mt-3"><strong>Total:</strong> {{ total }}</p>
 
+{% set main_ccy = config.MAIN_CURRENCY %}
+
 <table class="table table-sm table-dark table-striped">
   <thead>
-    <tr><th>id</th><th>date</th><th>description</th><th>amount</th><th>category</th><th>actions</th></tr>
+    <tr><th>id</th><th>date</th><th>description</th><th>amount ({{main_ccy}})</th><th>category</th><th>actions</th></tr>
   </thead>
   <tbody>
     {% for tx in transactions %}
@@ -80,7 +88,14 @@
       <td>{{ tx['date'] }}</td>
       <td>{{ tx['description'] }}</td>
       <td>{{ tx['amount'] }}</td>
-      <td>{{ tx['category'] }}</td>
+      <td>
+        {% set emoji = cat_emoji_map.get(tx['category']|lower, '') %}
+        {% if emoji %}
+          <span class="category-emoji-inline" title="{{ tx['category'] }}">{{ emoji }}&nbsp;</span>
+        {% endif %}
+        <span class="category-name-inline">{{ tx['category'] }}</span>
+      </td>
+
       <td>
         <a class="btn btn-sm btn-outline-primary" href="{{ url_for('transaction', tx_id=tx['id']) }}">view</a>
         <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('edit', tx_id=tx['id']) }}">edit</a>

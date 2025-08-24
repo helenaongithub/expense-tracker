@@ -2,25 +2,31 @@ from flask import Flask, render_template, request, redirect, url_for, flash, jso
 import datetime
 import os
 
-# import your existing modules
 from backend import db as dbmod
 from backend import categories as catmod 
 from backend import add_transcations as add_mod 
 from backend import automations as auto_mod
-from backend.utils import parse_date, validate_form_date, get_where_clause
+from backend import sync as sync_mod
+from backend import utils
+from backend import rates
 
 # -------------------------
 # app & database setup
 # -------------------------
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET')
+app.config['MAIN_CURRENCY'] = os.environ.get('MAIN_CURRENCY', 'EUR')
+
+# downlaod current database
+download_script = os.environ.get('SYNC_DOWNLOAD_SCRIPT')
+job = sync_mod.run_sync_job(download_script)
 
 # ensure DB exists and automations run on startup (same as CLI main did)
 dbmod.init_db()
 catmod.init_categories_db()
 auto_mod.init_automations_db()
 
-# run automations once on startup to mirror your CLI behaviour
+# run automations once on startup to mirror CLI behaviour
 try:
     auto_mod.update_fix_transactions()
 except Exception as e:
@@ -115,8 +121,8 @@ def index():
         year = month = day = None
         params.append(search_id)
     if search_amount:
-        addon += ' AND (amount = ? OR amount = -?) '
-        params.extend([search_amount, search_amount])
+        addon += ' AND ((amount BETWEEN ? AND ?) OR (amount BETWEEN ? AND ?)) '
+        params.extend([float(search_amount) - 1, float(search_amount) + 1, -float(search_amount) - 1, -float(search_amount) + 1])
     if search_desc:
         addon += ' AND description LIKE ?'
         params.append(f'%{search_desc}%')
@@ -136,7 +142,7 @@ def index():
         eff_month = month or now.month
         effective_time = f"{eff_year}-{eff_month:02d}"
 
-    where_clause, duration = get_where_clause('WHERE 1=1 ', year, month, day, total)
+    where_clause, duration = utils.get_where_clause('WHERE 1=1 ', year, month, day, total)
     where_clause += addon
 
     # --- SORTING ---
@@ -148,17 +154,27 @@ def index():
     txs = dbmod.query_transactions(where_clause=where_clause, params=tuple(params), order_by=order_value)
     total_amount = dbmod.sum_query(where_clause=where_clause, params=tuple(params))
 
+    # build a case-insensitive mapping name -> emoji for fast lookup in template
+    cats = catmod.list_categories_with_ids()
+    cat_emoji_map = {}
+    for c in cats:
+        if c.get('name') is None:
+            continue
+        cat_emoji_map[c['name'].lower()] = c.get('emoji') or ''
+
+    # pass to template
     return render_template('index.html',
-                           transactions=txs,
-                           total=round(total_amount, 2),
-                           duration=duration,
-                           order=order,
-                           time=time,
-                           search_id=search_id,
-                           search_amount=search_amount,
-                           search_desc=search_desc,
-                           search_cate=search_cate,
-                           effective_time=effective_time)
+                        transactions=txs,
+                        total=round(total_amount, 2),
+                        duration=duration,
+                        order=order,
+                        time=time,
+                        search_id=search_id,
+                        search_amount=search_amount,
+                        search_desc=search_desc,
+                        search_cate=search_cate,
+                        effective_time=effective_time,
+                        cat_emoji_map=cat_emoji_map)
 
 # ---- add transaction ----
 @app.route('/add', methods=['GET', 'POST'])
@@ -172,7 +188,8 @@ def add():
         'description': '',
         'amount': '',
         'category': '',
-        'is_expense': '1'
+        'is_expense': '1',
+        'currency': app.config['MAIN_CURRENCY']
     }
 
     if request.method == 'POST':
@@ -182,6 +199,8 @@ def add():
         form['amount'] = request.form.get('amount', '').strip()
         form['category'] = request.form.get('category', '').strip()
         form['is_expense'] = request.form.get('is_expense', '1')
+        form['currency'] = request.form.get('currency', app.config['MAIN_CURRENCY']).strip().lower()
+
 
         # validate amount
         try:
@@ -197,7 +216,7 @@ def add():
         # validate date
         try:
             # parse_date returns string YYYY-MM-DD or raises
-            parsed_date = form['date'] if validate_form_date(form['date']) else today_date
+            parsed_date = form['date'] if utils.validate_form_date(form['date']) else today_date
             form['date'] = parsed_date
         except Exception:
             errors['date'] = 'Invalid date format'
@@ -216,9 +235,14 @@ def add():
 
         # no errors — create transaction
         try:
-            add_mod.create_transaction(form['date'], form['description'], amount, form['category'], int(form['is_expense']))
+            add_mod.create_transaction(form['date'], form['description'], amount, form['category'], int(form['is_expense']), form['currency'])
             flash('Transaction added', 'success')
             return redirect(url_for('index'))
+        except RuntimeError as e:
+            # conversion specific errors
+            flash(f'Failed to add transaction: {e}', 'danger')
+            errors['general'] = str(e)
+            return render_template('add_edit.html', tx=None, today_date=today_date, errors=errors, form=form)
         except Exception as e:
             flash(f'Failed to add transaction: {e}', 'danger')
             # fall through and show form again
@@ -241,12 +265,17 @@ def edit(tx_id):
 
     # convert tx row to dict for default form values
     tx_dict = dict(tx)
+
+    main_ccy = app.config.get('MAIN_CURRENCY', 'EUR').strip().lower()
+    displayed_amount = abs(float(tx_dict.get('amount', 0)))
+
     form = {
         'date': tx_dict.get('date', ''),
         'description': tx_dict.get('description', ''),
-        'amount': str(abs(tx_dict.get('amount', 0))),
+        'amount': str(displayed_amount),
         'category': tx_dict.get('category', ''),
-        'is_expense': str(tx_dict.get('is_expense', 1))
+        'is_expense': str(tx_dict.get('is_expense', 1)),
+        'currency': tx_dict.get('currency', app.config['MAIN_CURRENCY'].strip().lower()) 
     }
     errors = {}
 
@@ -260,22 +289,23 @@ def edit(tx_id):
         form['amount'] = request.form.get('amount', '').strip()
         form['category'] = request.form.get('category', '').strip() or form['category']
         form['is_expense'] = request.form.get('is_expense', form['is_expense'])
+        form['currency'] = request.form.get('currency', app.config['MAIN_CURRENCY']).strip().lower()
 
         # validate amount
         try:
             if form['amount'] == '':
                 # if empty, keep old amount
-                amount = abs(tx_dict['amount'])
+                amount_val = displayed_amount
             else:
-                amount = float(form['amount'])
-                if amount <= 0:
+                amount_val = float(form['amount'])
+                if amount_val <= 0:
                     raise ValueError('Amount must be greater than 0')
         except ValueError as e:
             errors['amount'] = str(e)
 
         # validate date
         try:
-            parsed_date = form['date'] if validate_form_date(form['date']) else today_date
+            parsed_date = form['date'] if utils.validate_form_date(form['date']) else today_date
             form['date'] = parsed_date
         except Exception:
             errors['date'] = 'Invalid date format'
@@ -291,16 +321,27 @@ def edit(tx_id):
         if errors:
             # re-render edit form with errors and previously entered values
             return render_template('add_edit.html', tx=form, errors=errors, redirect_url=request.form.get('redirect_url', url_for('index')))
+        
+        # convert entered amount to main currency if needed
+        try:
+            if form['currency'] != main_ccy:
+                converted = rates.convert(amount_val, form['currency'], main_ccy, parsed_date)
+            else:
+                converted = amount_val
+        except Exception as e:
+            flash(f'Currency conversion failed: {e}', 'danger')
+            errors['general'] = f'Currency conversion failed: {e}'
+            return render_template('add_edit.html', tx=form, errors=errors, redirect_url=redirect_url, main_ccy=main_ccy)
 
         # store amount according to convention
         is_exp = True if form['is_expense'] == '1' else False
-        store_amount = -abs(amount) if is_exp else abs(amount)
+        stored_amount = -abs(converted) if is_exp else abs(converted)
 
         with dbmod.get_conn() as conn:
             c = conn.cursor()
             try:
                 c.execute("""UPDATE expenses SET date=?, description=?, amount=?, category=?, is_expense=? WHERE id=?""",
-                            (form['date'], form['description'], store_amount, form['category'], 1 if is_exp else 0, tx_id))
+                            (form['date'], form['description'], stored_amount, form['category'], 1 if is_exp else 0, tx_id))
                 conn.commit()
                 flash('Transaction updated', 'success')
                 return redirect(redirect_url or url_for('index'))
@@ -405,20 +446,22 @@ def categories():
 @app.route('/categories/add', methods=['POST'])
 def add_category():
     name = request.form.get('name','').strip()
+    emoji = request.form.get('emoji', '').strip() or None
     if not name:
         flash('Category name required', 'warning')
         return redirect(url_for('categories'))
-    catmod.add_category(name)
+    catmod.add_category(name, emoji)
     flash('Category added', 'success')
     return redirect(url_for('categories'))
 
 @app.route('/categories/<int:cat_id>/edit', methods=['POST'])
 def edit_category(cat_id):
     new_name = request.form.get('name','').strip()
+    new_emoji = request.form.get('emoji','').strip() or None
     if not new_name:
         flash('Name required', 'warning')
         return redirect(url_for('categories'))
-    ok = catmod.update_category_name(cat_id, new_name)
+    ok = catmod.update_category_name(cat_id, new_name, new_emoji)
     flash('Category updated' if ok else 'Update failed', 'success' if ok else 'danger')
     return redirect(url_for('categories'))
 
@@ -527,7 +570,7 @@ def _build_where_and_params_from_request(default_total_if_empty=False):
 
     year, month, day, total = _parse_time_from_arg(time, default_total_if_empty=default_total_if_empty)
 
-    where_clause, duration = get_where_clause('WHERE 1=1 ', year, month, day, total)
+    where_clause, duration = utils.get_where_clause('WHERE 1=1 ', year, month, day, total)
 
     params = []
 
@@ -555,7 +598,6 @@ def _build_where_and_params_from_request(default_total_if_empty=False):
         params.append(f'%{search_cate}%')
 
     return where_clause, tuple(params), duration
-
 
 @app.route('/dashboard')
 def dashboard():
@@ -688,7 +730,37 @@ def dashboard_data():
         'empty': empty
     })
 
+# ---- sync ----
+@app.route('/sync_data', methods=['POST'])
+def sync_data():
+    script = os.environ.get('SYNC_UPLOAD_SCRIPT')
+    if not script:
+        return jsonify({'ok': False, 'error': 'SYNC_UPLOAD_SCRIPT not set'}), 500
 
+    try:
+        job = sync_mod.start_sync_job(script)
+    except FileNotFoundError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+    # return job id & pid
+    return jsonify({'ok': True, 'job_id': job['job_id'], 'pid': job['pid'], 'log_url': url_for('sync_log', job_id=job['job_id'])}), 200
+
+
+@app.route('/sync_status/<job_id>')
+def sync_status(job_id):
+    job = sync_mod.get_job(job_id)
+    if not job:
+        return jsonify({'ok': False, 'error': 'job not found'}), 404
+    return jsonify({'ok': True, 'running': job['running'], 'pid': job['pid'], 'started_at': job['started_at'], 'returncode': job['returncode'], 'error': job.get('error')})
+
+@app.route('/sync_log/<job_id>')
+def sync_log(job_id):
+    res = sync_mod.tail_log(job_id)
+    if res is None:
+        return jsonify({'ok': False, 'error': 'job not found'}), 404
+    return jsonify(res)
 
 if __name__ == '__main__':
     app.run(debug=False)

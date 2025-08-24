@@ -15,7 +15,8 @@
       <div class="container">
         <a class="navbar-brand" href="{{ url_for('index') }}">Expenses Tracker</a>
         <div>
-          <a class="btn btn-sm btn-outline-primary me-2" href="{{ url_for('add') }}">Add</a>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('add') }}">Add</a>
+          <button id="sync-btn" class="btn btn-sm btn-outline-primary me-1">Sync</button>
           <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('automations_view') }}">Automations</a>
           <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('categories') }}">Categories</a>
           <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('dashboard') }}">Visualization</a>
@@ -69,22 +70,43 @@
 
         // attach click handlers to all delete buttons that have class 'delete-btn'
         document.querySelectorAll('.delete-btn').forEach(button => {
-          button.addEventListener('click', function (e) {
-            e.preventDefault();
-            // find form id to submit (data-form-id) or enclosing form
-            const formId = this.getAttribute('data-form-id');
-            if (formId) {
-              formToSubmit = document.getElementById(formId);
-            } else {
-              // fallback: find nearest form ancestor
-              formToSubmit = this.closest('form');
+        button.addEventListener('click', function (e) {
+          e.preventDefault();
+          const formId = this.getAttribute('data-form-id');
+          // if formId given but not found, fallback to nearest form
+          if (formId) {
+            formToSubmit = document.getElementById(formId) || this.closest('form');
+          } else {
+            formToSubmit = this.closest('form');
+          }
+          const details = this.getAttribute('data-item') || '';
+          detailsNode.textContent = details;
+
+          // blur any currently-focused element
+          try {
+            if (document.activeElement && document.activeElement !== document.body) {
+              document.activeElement.blur();
             }
-            // optional: show details about the item (data-item)
-            const details = this.getAttribute('data-item') || '';
-            detailsNode.textContent = details;
-            modal.show();
-          });
+          } catch (err) {
+            // ignore
+          }
+
+          modal.show();
         });
+      });
+
+      confirmBtn.addEventListener('click', function () {
+        if (formToSubmit) {
+          formToSubmit.submit();
+          formToSubmit = null;
+          modal.hide();
+        } else {
+          // nothing to submit — hide modal and log for debugging
+          console.warn('Delete confirm pressed but no form found to submit.');
+          modal.hide();
+        }
+      });
+
 
         confirmBtn.addEventListener('click', function () {
           if (formToSubmit) {
@@ -97,5 +119,126 @@
 
       });
     </script>
+
+    <!-- Sync Result Modal -->
+<div class="modal fade" id="syncResultModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content bg-dark text-light">
+      <div class="modal-header">
+        <h5 class="modal-title">Sync result</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="sync-result-body">
+          <div class="text-center">Waiting for result...</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+  <script>
+(function(){
+  if (typeof bootstrap === 'undefined') return;
+
+  const syncBtn = document.getElementById('sync-btn');
+  const resultModalEl = document.getElementById('syncResultModal');
+  const resultBody = document.getElementById('sync-result-body');
+  if (!syncBtn || !resultModalEl || !resultBody) return;
+  const resultModal = new bootstrap.Modal(resultModalEl, {});
+
+  let pollInterval = null;
+
+  syncBtn.addEventListener('click', async () => {
+    syncBtn.disabled = true;
+    const origText = syncBtn.innerText;
+    syncBtn.innerText = 'Starting…';
+
+    resultBody.innerHTML = `<div class="text-center my-3">
+      <div class="spinner-border text-light" role="status"></div>
+      <div class="mt-2 text-light">Starting sync…</div>
+    </div>`;
+
+    resultModal.show();
+
+    try {
+      const res = await fetch('{{ url_for("sync_data") }}', { method: 'POST', headers: { 'Accept': 'application/json' }});
+      const json = await res.json().catch(()=>null);
+      if (!json) {
+        resultBody.innerHTML = `<div class="alert alert-warning">No JSON response (HTTP ${res.status}).</div>`;
+        return;
+      }
+      if (!json.ok) {
+        resultBody.innerHTML = `<div class="alert alert-danger">Failed to start: ${json.error || 'unknown'}</div>`;
+        return;
+      }
+
+      const jobId = json.job_id;
+      resultBody.innerHTML = `
+        <div class="mb-2">
+          <div><strong>Job started:</strong> ${jobId}</div>
+          <div class="small">PID: ${json.pid || 'n/a'}</div>
+        </div>
+        <div id="sync-status-area"><div>Polling status…</div></div>
+        <div class="mt-3">
+          <button id="view-log-btn" class="btn btn-sm btn-outline-primary">View log</button>
+          <a class="btn btn-sm btn-outline-secondary" href="${json.log_url}" target="_blank">Open log endpoint</a>
+        </div>
+      `;
+
+      // set up view log button
+      document.getElementById('view-log-btn').addEventListener('click', async () => {
+        const r = await fetch('/sync_log/' + encodeURIComponent(jobId));
+        const j = await r.json().catch(()=>null);
+        if (!j || !j.ok) {
+          resultBody.innerHTML += `<div class="alert alert-warning mt-2">Could not fetch log.</div>`;
+          return;
+        }
+        const pre = '<pre class="small bg-dark text-light p-2" style="max-height:40vh;overflow:auto">' + escapeHtml(j.log) + '</pre>';
+        resultBody.innerHTML += `<div class="mt-3"><h6>Log (tail)</h6>${pre}</div>`;
+      });
+
+      // start polling status every 2s
+      const statusArea = document.getElementById('sync-status-area');
+      const poll = async () => {
+        try {
+          const r2 = await fetch('/sync_status/' + encodeURIComponent(jobId));
+          const s = await r2.json().catch(()=>null);
+          if (!s || !s.ok) {
+            statusArea.innerHTML = `<div class="text-danger">Status error</div>`;
+            return;
+          }
+          statusArea.innerHTML = `<div>running: <strong>${s.running ? 'yes' : 'no'}</strong> — started: ${escapeHtml(s.started_at || 'n/a')}</div>`;
+          if (!s.running) {
+            statusArea.innerHTML += `<div class="text-success mt-2">Job finished. Click "View log" to see output.</div>`;
+            clearInterval(pollInterval);
+            pollInterval = null;
+          }
+        } catch (e) {
+          statusArea.innerHTML = `<div class="text-danger">Poll failed</div>`;
+        }
+      };
+
+      // immediate status fetch then periodic
+      poll();
+      if (!pollInterval) pollInterval = setInterval(poll, 2000);
+
+    } catch (err) {
+      resultBody.innerHTML = `<div class="alert alert-danger">Request failed: ${escapeHtml(String(err))}</div>`;
+    } finally {
+      syncBtn.disabled = false;
+      syncBtn.innerText = origText;
+    }
+  });
+
+  // helper
+  function escapeHtml(s){ if (s==null) return ''; return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;'); }
+})();
+</script>
+
+
   </body>
 </html>

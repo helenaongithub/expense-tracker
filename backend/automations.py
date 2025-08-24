@@ -144,7 +144,6 @@ def update_automation(aid, new_data):
     if end:
         try:
             end_dt = datetime.strptime(end, '%Y-%m-%d')
-            # do not force-cap end to today here unless you intend to
             end_val = end_dt.strftime('%Y-%m-%d')
         except Exception:
             raise ValueError('end must be YYYY-MM-DD')

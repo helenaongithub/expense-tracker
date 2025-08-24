@@ -7,7 +7,7 @@
   <dl class="row">
     <dt class="col-sm-3">Date</dt><dd class="col-sm-9">{{ tx['date'] }}</dd>
     <dt class="col-sm-3">Description</dt><dd class="col-sm-9">{{ tx['description'] }}</dd>
-    <dt class="col-sm-3">Amount</dt><dd class="col-sm-9">{{ tx['amount'] }}</dd>
+    <dt class="col-sm-3">Amount</dt>
     <dt class="col-sm-3">Category</dt><dd class="col-sm-9">{{ tx['category'] }}</dd>
   </dl>
 
@@ -37,27 +37,39 @@
       {% endif %}
     </div>
 
-    <div class="mb-3">
-      <label for="description" class="form-label">Description</label>
-      <input id="description" name="description"
-             class="form-control {% if errors and errors.get('description') %}is-invalid{% endif %}"
-             value="{{ (form.description if form and (form.description|string).strip() else (tx.description if tx else '')) }}">
-      {% if errors and errors.get('description') %}
-        <div class="invalid-feedback">{{ errors.get('description') }}</div>
-      {% endif %}
-    </div>
+<div class="mb-3">
+  <label for="description" class="form-label">Description</label>
+  <input id="description" name="description"
+         class="form-control {% if errors and errors.get('description') %}is-invalid{% endif %}"
+         value="{{ (form.description if form and (form.description|string).strip() else (tx.description if tx else '')) }}">
+  {% if errors and errors.get('description') %}
+    <div class="invalid-feedback">{{ errors.get('description') }}</div>
+  {% endif %}
+</div>
 
-    <div class="mb-3">
-      <label for="amount" class="form-label">Amount</label>
+<div class="mb-3">
+  <label class="form-label">Amount</label>
+  <div class="d-flex">
+    <div class="input-group">
       <input id="amount" name="amount" type="number" step="0.01"
-             class="form-control {% if errors and errors.get('amount') %}is-invalid{% endif %}"
-             value="{{ (form.amount if form and (form.amount|string).strip() else (tx.amount if tx else '')) }}">
-      {% if errors and errors.get('amount') %}
-        <div class="invalid-feedback">{{ errors.get('amount') }}</div>
-      {% else %}
-        <div class="form-text">Enter a positive number. For expenses, set Type = Expense.</div>
-      {% endif %}
+            class="form-control {% if errors and errors.get('amount') %}is-invalid{% endif %}"
+            value="{{ (form.amount if form and (form.amount|string).strip() else (tx.amount if tx else '')) }}">
     </div>
+    <div class="flex-grow-1">
+      <select id="currency" name="currency" class="form-select" style="min-width:140px; float:right;">
+        {% set main_ccy = config.MAIN_CURRENCY %}
+        {% for ccy in ['EUR', 'SEK', 'USD','GBP','CHF','NOK','AUD','PLN','DKK','CAD','JPY'] %}
+          <option value="{{ ccy }}" {% if (form.currency if form else (tx.orig_currency if tx else main_ccy)) == ccy %}selected{% endif %}>{{ ccy }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  {% if errors and errors.get('amount') %}
+    <div class="invalid-feedback">{{ errors.get('amount') }}</div>
+  {% else %}
+    <div class="form-text ms-2">Enter positive number. For expenses choose Type = Expense.</div>
+  {% endif %}
+</div>
 
     <div class="mb-3">
       <label for="category" class="form-label">Category</label>
